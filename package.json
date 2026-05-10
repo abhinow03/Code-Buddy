@@ -1,0 +1,111 @@
+{
+  "name": "codebuddy-tutor",
+  "displayName": "CodeBuddy Tutor",
+  "description": "A Python-first AI coding tutor that turns daily coding mistakes into personalized lessons.",
+  "version": "0.2.0",
+  "publisher": "your-publisher-name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abhinow03/Code-Buddy.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Education",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:codebuddy.openChat",
+    "onCommand:codebuddy.explainSelection",
+    "onCommand:codebuddy.setApiKey",
+    "onCommand:codebuddy.clearApiKey"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codebuddy.openChat",
+        "title": "CodeBuddy: Open Tutor Chat"
+      },
+      {
+        "command": "codebuddy.explainSelection",
+        "title": "CodeBuddy: Ask Selection"
+      },
+      {
+        "command": "codebuddy.setApiKey",
+        "title": "CodeBuddy: Set API Key"
+      },
+      {
+        "command": "codebuddy.clearApiKey",
+        "title": "CodeBuddy: Clear API Key"
+      }
+    ],
+    "configuration": {
+      "title": "CodeBuddy Tutor",
+      "properties": {
+        "codebuddy.provider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai",
+            "openrouter",
+            "local"
+          ],
+          "default": "anthropic",
+          "description": "AI provider used for tutor replies."
+        },
+        "codebuddy.apiBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional API base URL override. Leave blank to use the provider default."
+        },
+        "codebuddy.model": {
+          "type": "string",
+          "default": "",
+          "description": "Optional model override. Leave blank to use the provider default."
+        },
+        "codebuddy.tutorLevel": {
+          "type": "string",
+          "enum": [
+            "beginner",
+            "intermediate",
+            "advanced"
+          ],
+          "default": "beginner",
+          "description": "How deeply CodeBuddy should explain concepts."
+        },
+        "codebuddy.maxContextCharacters": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 1000,
+          "maximum": 20000,
+          "description": "Maximum characters of editor context sent with a question."
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codebuddy.explainSelection",
+          "when": "editorHasSelection",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^2.32.0",
+    "typescript": "^5.5.4"
+  }
+}
