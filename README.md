@@ -25,17 +25,18 @@ CodeBuddy is actively being built. Core tutoring chat works, but features like t
 
 ## Current Features
 
-- Bottom status-bar launcher inside VS Code
 - Compact tutor chat panel
 - Streaming AI responses
-- Active file and selected code context
+-Active file, cursor position, and surrounding code context awareness
 - Context transparency before each request
-- Right-click selected code -> `CodeBuddy: Ask Selection`
+- Right-click selected code -> `Crtl+Alt+B`
+- Shoot your question
 - Teaching modes: `Explain`, `Hint`, `Debug`, `Quiz`, and `Full Answer`
 - `Check thinking` workflow for mental-model correction
 - Quiet concept tracking from real code
 - Quiet mistake memory for repeated bug patterns
-- Simplified buddy-style chat UI
+- Lives inside the editor, so you can ask questions and get guidance without leaving your coding workflow
+- Works directly within your editor and responds in-context, eliminating tab switching  
 - Confidence feedback after explanations: `Not yet`, `Mostly`, `Got it`
 - Workspace-level chat history
 - Learning streak state
