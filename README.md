@@ -1,14 +1,23 @@
 # CodeBuddy Tutor
 
-CodeBuddy Tutor is a Python-first AI coding tutor for VS Code. It is designed to help developers understand what they are building instead of simply generating code for them.
+**An AI coding tutor for VS Code that helps you learn instead of coding for you.**
 
-> CodeBuddy turns daily coding mistakes into personalized lessons.
+Most AI coding tools make you faster by generating code instantly.
 
-## Why CodeBuddy Exists
+CodeBuddy takes a different approach.
 
-Most AI coding tools optimize for speed: generate code, apply edits, and move on. CodeBuddy optimizes for learning. It explains concepts, gives hints before solutions, checks the user's mental model, remembers recurring mistakes, and turns real coding sessions into review material.
+Instead of autocomplete and instant fixes, it acts like a mentor inside your editor — helping you debug, explaining concepts, asking guiding questions, and nudging you toward the solution.
 
-The goal is simple: make the user a stronger developer, not a more dependent one.
+Built because while studying, I realized AI tools were solving my coding problems *for me* instead of helping me understand them.
+
+With CodeBuddy, you can:
+- Ask coding questions without leaving VS Code
+- Debug errors with guided explanations
+- Explain selected code
+- Check your understanding before seeing answers
+- Learn from repeated mistakes over time
+
+**Goal:** make developers better problem-solvers, not more dependent on AI.
 
 ## Current Features
 
@@ -135,11 +144,4 @@ code --install-extension codebuddy-tutor-0.2.0.vsix --force
 - Code context is sent to the configured AI provider only when the user asks a question or triggers a CodeBuddy action.
 - The current version does not include telemetry.
 
-## Roadmap
 
-- Terminal error explanation
-- Real spaced repetition with due dates
-- Stronger Python concept classifier
-- Better local-model onboarding
-- Hosted free tier with rate limits
-- Marketplace-ready branding and screenshots
