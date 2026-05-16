@@ -27,3 +27,9 @@
 - Added "Check thinking" mental-model correction.
 - Added confidence feedback after tutor replies.
 - Updated product positioning around turning coding mistakes into personalized lessons.
+
+## 0.2.1
+
+- Simplified the chat UI into a smaller buddy-style chat box.
+- Removed visible learning dashboards from the main chat surface.
+- Fixed file context capture by remembering the last active editor.

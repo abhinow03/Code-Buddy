@@ -10,7 +10,7 @@ body {
   margin: 0;
   font-family: var(--vscode-font-family);
   color: var(--vscode-foreground);
-  background: var(--vscode-sideBar-background);
+  background: var(--vscode-editor-background);
 }
 
 button,
@@ -20,7 +20,7 @@ textarea {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto auto;
+  grid-template-rows: auto 1fr auto;
   height: 100vh;
   min-width: 0;
 }
@@ -29,107 +29,25 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 12px 10px;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+  gap: 10px;
+  padding: 12px 12px 8px;
+  border-bottom: 1px solid var(--vscode-widget-border);
 }
 
 .topbar h1 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0;
 }
 
-.topbar p,
-.eyebrow {
+.topbar p {
   margin: 2px 0 0;
   color: var(--vscode-descriptionForeground);
   font-size: 12px;
-}
-
-.learning {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
-}
-
-.memory {
-  display: grid;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
-}
-
-.memory-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 24px;
-  margin-top: 4px;
-}
-
-.memory-item {
-  max-width: 180px;
-  padding: 3px 7px;
-  border: 1px solid var(--vscode-widget-border);
-  border-radius: 6px;
-  color: var(--vscode-foreground);
-  background: var(--vscode-editorWidget-background);
-  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.memory-item.muted {
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-input-background);
-}
-
-.concepts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 28px;
-  align-items: center;
-}
-
-.concept {
-  max-width: 150px;
-  min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid var(--vscode-focusBorder);
-  border-radius: 999px;
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.concept.reviewed,
-.concept.muted {
-  border-color: var(--vscode-widget-border);
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-input-background);
-}
-
-.context {
-  min-height: 0;
-  padding: 8px 12px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-input-background);
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.context:empty {
-  display: none;
 }
 
 .messages {
@@ -144,14 +62,21 @@ textarea {
 .message {
   display: grid;
   gap: 5px;
-  padding: 10px;
+  max-width: 92%;
+  padding: 10px 11px;
   border: 1px solid var(--vscode-widget-border);
   border-radius: 8px;
   background: var(--vscode-editorWidget-background);
 }
 
 .message.user {
+  align-self: flex-end;
   border-color: var(--vscode-focusBorder);
+  background: var(--vscode-input-background);
+}
+
+.message.assistant {
+  align-self: flex-start;
 }
 
 .message-label {
@@ -165,26 +90,6 @@ textarea {
   white-space: pre-wrap;
   line-height: 1.45;
   overflow-wrap: anywhere;
-}
-
-.confidence {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding-top: 4px;
-  color: var(--vscode-descriptionForeground);
-  font-size: 12px;
-}
-
-.confidence-button {
-  min-height: 24px;
-  padding: 2px 7px;
-  border: 1px solid var(--vscode-widget-border);
-  border-radius: 6px;
-  color: var(--vscode-button-secondaryForeground);
-  background: var(--vscode-button-secondaryBackground);
-  cursor: pointer;
 }
 
 .status,
@@ -209,61 +114,21 @@ textarea {
   color: var(--vscode-foreground);
 }
 
-.quick-actions {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--vscode-sideBarSectionHeader-border);
-}
-
-.mode,
-.secondary,
-.primary,
-.icon-button {
-  min-height: 30px;
-  border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.mode,
-.secondary,
-.icon-button {
-  color: var(--vscode-button-secondaryForeground);
-  background: var(--vscode-button-secondaryBackground);
-}
-
-.mode:hover,
-.secondary:hover,
-.icon-button:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.mode.active,
-.primary {
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
-}
-
-.mode.active:hover,
-.primary:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
 .composer {
   display: grid;
   gap: 8px;
-  padding: 0 12px 12px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--vscode-widget-border);
+  background: var(--vscode-editor-background);
 }
 
 textarea {
   width: 100%;
-  resize: vertical;
-  min-height: 84px;
-  max-height: 180px;
+  resize: none;
+  min-height: 64px;
+  max-height: 130px;
   padding: 10px;
-  border: 1px solid var(--vscode-input-border, transparent);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border));
   border-radius: 8px;
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
@@ -276,6 +141,37 @@ textarea:focus {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: auto auto 1fr;
   gap: 8px;
+}
+
+.secondary,
+.primary,
+.icon-button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.secondary,
+.icon-button {
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+}
+
+.secondary:hover,
+.icon-button:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.primary {
+  justify-self: end;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.primary:hover {
+  background: var(--vscode-button-hoverBackground);
 }
