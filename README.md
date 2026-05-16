@@ -6,7 +6,7 @@ Most AI coding tools make you faster by generating code instantly.
 
 CodeBuddy takes a different approach.
 
-Instead of autocomplete and instant fixes, it acts like a mentor inside your editor = helping you debug, explaining concepts, asking guiding questions, and nudging you toward the solution.
+Instead of autocomplete and instant fixes, it acts like a mentor inside your editor - helping you debug, explaining concepts, asking guiding questions, and nudging you toward the solution.
 
 Built because while studying, I realized AI tools were solving my coding problems *for me* instead of helping me understand them.
 
