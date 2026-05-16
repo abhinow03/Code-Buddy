@@ -18,6 +18,9 @@ With CodeBuddy, you can:
 - Learn from repeated mistakes over time
 
 **Goal:** make developers better problem-solvers, not more dependent on AI.
+⚠️ Work in Progress (Early Alpha)
+
+CodeBuddy is actively being built. Core tutoring chat works, but features like terminal debugging, learning memory, and review workflows are still in development.
 
 ## Current Features
 
