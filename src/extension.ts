@@ -67,6 +67,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     statusBarItem,
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      chat.setLastEditor(editor);
+    }),
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      chat.setLastEditor(event.textEditor);
+    }),
     vscode.commands.registerCommand("codebuddy.openChat", async () => {
       chat.show();
     }),
@@ -92,6 +98,7 @@ class CodeBuddyChat {
   private concepts: ConceptRecord[];
   private mistakes: MistakeRecord[];
   private streak: StreakState;
+  private lastEditor?: vscode.TextEditor;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -101,7 +108,15 @@ class CodeBuddyChat {
     this.concepts = context.workspaceState.get<ConceptRecord[]>(CONCEPTS_KEY, []);
     this.mistakes = context.workspaceState.get<MistakeRecord[]>(MISTAKES_KEY, []);
     this.streak = context.workspaceState.get<StreakState>(STREAK_KEY, { current: 0, lastActiveDate: "" });
+    this.lastEditor = vscode.window.activeTextEditor;
     void this.touchStreak();
+  }
+
+  setLastEditor(editor?: vscode.TextEditor) {
+    if (editor && editor.document.uri.scheme !== "vscode-webview") {
+      this.lastEditor = editor;
+      this.postLearningState();
+    }
   }
 
   show(preserveFocus = false) {
@@ -137,7 +152,7 @@ class CodeBuddyChat {
   }
 
   async explainSelection() {
-    const selectedText = getSelectedText();
+    const selectedText = getSelectedText(this.lastEditor);
     if (!selectedText) {
       this.postStatus("Select code first, then ask CodeBuddy.");
       return;
@@ -245,7 +260,7 @@ class CodeBuddyChat {
     const level = config.get<string>("tutorLevel", "beginner");
     const context = forcedContext
       ? buildForcedContext(forcedContext, config.get<number>("maxContextCharacters", 6000))
-      : collectEditorContext(config.get<number>("maxContextCharacters", 6000));
+      : collectEditorContext(config.get<number>("maxContextCharacters", 6000), this.lastEditor);
     const priorHistory = this.history.slice(-8);
     const detectedConcepts = detectConcepts(`${trimmed}\n${context.text}`);
     const detectedMistakes = detectMistakes(`${trimmed}\n${context.text}`);
@@ -404,7 +419,9 @@ class CodeBuddyChat {
       concepts: this.concepts.slice(0, 8),
       mistakes: this.mistakes.slice(0, 5),
       learningDebt: getLearningDebt(this.concepts, this.mistakes).slice(0, 5),
-      streak: this.streak
+      streak: this.streak,
+      fileName: this.lastEditor?.document.fileName,
+      languageId: this.lastEditor?.document.languageId
     });
   }
 
@@ -444,47 +461,17 @@ class CodeBuddyChat {
     <header class="topbar">
       <div>
         <h1>CodeBuddy</h1>
-        <p id="streak">Python-first tutor</p>
+        <p id="fileStatus">No file attached yet</p>
       </div>
       <button id="clearChat" class="icon-button" title="Clear chat" aria-label="Clear chat">Clear</button>
     </header>
-
-    <section class="learning">
-      <div>
-        <span class="eyebrow">Concepts</span>
-        <div id="concepts" class="concepts"></div>
-      </div>
-      <button id="reviewConcept" class="secondary">Review</button>
-    </section>
-
-    <section class="memory">
-      <div>
-        <span class="eyebrow">Learning debt</span>
-        <div id="learningDebt" class="memory-list"></div>
-      </div>
-      <div>
-        <span class="eyebrow">Mistake memory</span>
-        <div id="mistakes" class="memory-list"></div>
-      </div>
-    </section>
-
-    <section id="context" class="context" aria-live="polite"></section>
     <section id="messages" class="messages" aria-live="polite"></section>
 
-    <section class="quick-actions" aria-label="Tutor modes">
-      <button data-mode="explain" class="mode active">Explain</button>
-      <button data-mode="hint" class="mode">Hint</button>
-      <button data-mode="debug" class="mode">Debug</button>
-      <button data-mode="quiz" class="mode">Quiz</button>
-      <button data-mode="answer" class="mode">Answer</button>
-    </section>
-
     <section class="composer">
-      <textarea id="input" rows="4" placeholder="Ask about Python code, an error, or a concept..."></textarea>
+      <textarea id="input" rows="3" placeholder="Ask CodeBuddy..."></textarea>
       <div class="actions">
-        <button id="explainSelection" class="secondary">Ask selection</button>
-        <button id="checkThinking" class="secondary">Check thinking</button>
-        <button id="setApiKey" class="secondary">API key</button>
+        <button id="explainSelection" class="secondary">Selection</button>
+        <button id="checkThinking" class="secondary">Thinking</button>
         <button id="send" class="primary">Send</button>
       </div>
     </section>
@@ -686,6 +673,7 @@ function buildSystemPrompt(level: string, mode: TutorMode, concepts: ConceptReco
     "6. Be warm, direct, and concise. Do not say 'Great question!' or add filler.",
     "7. Track what the user has learned in this session and refer back to it when useful.",
     "8. If the user is going in the wrong direction, say so clearly but kindly.",
+    "If editor context is provided, do not ask the user to paste the code. Use the provided file or selection context directly.",
     "Primary v1 focus: Python. If the context is not Python, say briefly that CodeBuddy is optimized for Python but still help with the concept.",
     "Novelty behavior: maintain a mentor-like memory. When relevant, connect the current question to repeated mistakes, learning debt, or concepts seen earlier.",
     "When the user's mental model is wrong, correct the mental model before giving code.",
@@ -765,14 +753,14 @@ function getModeInstruction(mode: TutorMode): string {
   }
 }
 
-function collectEditorContext(maxCharacters: number): EditorContext {
-  const editor = vscode.window.activeTextEditor;
+function collectEditorContext(maxCharacters: number, preferredEditor?: vscode.TextEditor): EditorContext {
+  const editor = preferredEditor ?? vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
   if (!editor) {
     return emptyContext();
   }
 
   const document = editor.document;
-  const selectedText = getSelectedText();
+  const selectedText = getSelectedText(editor);
   const source = selectedText ? "selection" : "file";
   const rawText = selectedText || document.getText();
   const startLine = selectedText ? editor.selection.start.line + 1 : 1;
@@ -797,7 +785,7 @@ function collectEditorContext(maxCharacters: number): EditorContext {
 }
 
 function buildForcedContext(text: string, maxCharacters: number): EditorContext {
-  const editor = vscode.window.activeTextEditor;
+  const editor = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors[0];
   const document = editor?.document;
   const languageId = document?.languageId ?? "plaintext";
   const header = [
@@ -844,8 +832,7 @@ function emptyContext(): EditorContext {
   };
 }
 
-function getSelectedText(): string {
-  const editor = vscode.window.activeTextEditor;
+function getSelectedText(editor = vscode.window.activeTextEditor): string {
   if (!editor || editor.selection.isEmpty) {
     return "";
   }

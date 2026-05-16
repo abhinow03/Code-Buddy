@@ -29,9 +29,9 @@ With CodeBuddy, you can:
 - Right-click selected code -> `CodeBuddy: Ask Selection`
 - Teaching modes: `Explain`, `Hint`, `Debug`, `Quiz`, and `Full Answer`
 - `Check thinking` workflow for mental-model correction
-- Concept tracking from real code
-- Mistake memory for repeated bug patterns
-- Learning debt surface for concepts that need review
+- Quiet concept tracking from real code
+- Quiet mistake memory for repeated bug patterns
+- Simplified buddy-style chat UI
 - Confidence feedback after explanations: `Not yet`, `Mostly`, `Got it`
 - Workspace-level chat history
 - Learning streak state
@@ -78,7 +78,8 @@ Run in VS Code:
 2. Press `F5`.
 3. In the Extension Development Host window, click `CodeBuddy` in the bottom status bar.
 4. Run `CodeBuddy: Set API Key`.
-5. Ask a question, select code and use `CodeBuddy: Ask Selection`, or write your understanding and click `Check thinking`.
+5. Click into the file you want help with, then ask naturally in the CodeBuddy chat.
+6. Select code and use `CodeBuddy: Ask Selection`, or write your understanding and click `Thinking`.
 
 ## Configuration
 
@@ -134,7 +135,7 @@ npm run package
 Install the generated package:
 
 ```bash
-code --install-extension codebuddy-tutor-0.2.0.vsix --force
+code --install-extension codebuddy-tutor-0.2.1.vsix --force
 ```
 
 ## Privacy Notes
