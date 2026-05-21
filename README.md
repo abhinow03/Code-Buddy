@@ -1,59 +1,24 @@
 # CodeBuddy Tutor
 
-CodeBuddy Tutor is a Python-first AI coding tutor for VS Code. It is designed to help developers understand what they are building instead of simply generating code for them.
+CodeBuddy is a VS Code extension for learning while you code.
 
-> CodeBuddy turns daily coding mistakes into personalized lessons.
+I made it because autocomplete tools were making it too easy to accept code without really studying it, and copying code into ChatGPT every time was annoying. CodeBuddy sits inside VS Code, reads the file and line you are on, and helps you understand the mistake instead of silently fixing it for you.
 
-## Why CodeBuddy Exists
+It is meant to feel like a small study buddy: ask about the current line, get a short wrapped comment in your file, then keep coding.
 
-Most AI coding tools optimize for speed: generate code, apply edits, and move on. CodeBuddy optimizes for learning. It explains concepts, gives hints before solutions, checks the user's mental model, remembers recurring mistakes, and turns real coding sessions into review material.
+## Features
 
-The goal is simple: make the user a stronger developer, not a more dependent one.
+- `Ctrl+Alt+B`: ask about the current line
+- `CodeBuddy: Hint For This Line`: get a hint without the full fix
+- `CodeBuddy: Full Solution For This Line`: get the direct fix when you want it
+- `Ctrl+Alt+C`: clear Buddy comments from the current file
+- `CodeBuddy: Review This Later`: save the last explanation for review
+- `CodeBuddy: Start Daily Review`: review saved concepts
+- `CodeBuddy: Show Mistake Timeline`: see repeated mistakes and learning debt
+- Uses VS Code `SecretStorage` for API keys
+- Supports Anthropic, OpenAI, OpenRouter, Gemini through OpenAI-compatible mode, and local OpenAI-compatible servers
 
-## Current Features
-
-- Bottom status-bar launcher inside VS Code
-- Compact tutor chat panel
-- `Ctrl+Alt+B` quick ask about the current cursor line
-- Short wrapped Buddy comments inserted below the relevant code line
-- Command triggers for hints and full solutions
-- `Ctrl+Alt+C` clears Buddy comments from the current file
-- Streaming AI responses
-- Active file and selected code context
-- Context transparency before each request
-- Right-click selected code -> `CodeBuddy: Ask Selection`
-- Teaching modes: `Explain`, `Hint`, `Debug`, `Quiz`, and `Full Answer`
-- `Check thinking` workflow for mental-model correction
-- Quiet concept tracking from real code
-- Quiet mistake memory for repeated bug patterns
-- Simplified buddy-style chat UI
-- Confidence feedback after explanations: `Not yet`, `Mostly`, `Got it`
-- Workspace-level chat history
-- Learning streak state
-- Secure API key storage with VS Code `SecretStorage`
-- Provider support for Anthropic, OpenAI, OpenRouter, and local OpenAI-compatible servers
-
-## Product Direction
-
-CodeBuddy is not meant to become an autonomous coding agent. Its main product loop is:
-
-```text
-User writes code
--> User gets stuck or wants to understand something
--> CodeBuddy explains, hints, or checks their thinking
--> CodeBuddy remembers the concept or mistake pattern
--> Later, CodeBuddy reviews that concept using the user's real coding history
-```
-
-This makes CodeBuddy closer to a personal coding mentor and learning memory than a code generator.
-
-## Requirements
-
-- VS Code `1.90.0` or newer
-- Node.js and npm for development
-- An API key for one supported provider, or a local OpenAI-compatible server
-
-## Local Development
+## Install For Testing
 
 Install dependencies:
 
@@ -61,52 +26,45 @@ Install dependencies:
 npm install
 ```
 
-Compile the extension:
+Build the extension:
 
 ```bash
 npm run compile
 ```
 
-Run in VS Code:
+Package it:
 
-1. Open this folder in VS Code.
-2. Press `F5`.
-3. In the Extension Development Host window, click `CodeBuddy` in the bottom status bar.
-4. Run `CodeBuddy: Set API Key`.
-5. Click into the file you want help with.
-6. Press `Ctrl+Alt+B` and ask about the current line.
-7. Read the wrapped Buddy comment inserted below the line.
-8. Use `Ctrl+Alt+C` to clear Buddy comments.
+```bash
+npm run package
+```
 
-Extra triggers:
+Install the generated VSIX:
 
-- `CodeBuddy: Hint For This Line`
-- `CodeBuddy: Full Solution For This Line`
+```bash
+code --install-extension codebuddy-tutor-0.5.0.vsix --force
+```
 
-The chat panel still exists, but the primary workflow is now keyboard-triggered and cursor-aware.
+Reload VS Code:
 
-## Configuration
+```text
+Developer: Reload Window
+```
 
-Settings available in VS Code:
+## Set API Key
 
-| Setting | Description |
-|---|---|
-| `codebuddy.provider` | `anthropic`, `openai`, `openrouter`, or `local` |
-| `codebuddy.apiBaseUrl` | Optional API base URL override |
-| `codebuddy.model` | Optional model override |
-| `codebuddy.tutorLevel` | `beginner`, `intermediate`, or `advanced` |
-| `codebuddy.maxContextCharacters` | Maximum editor context sent with a request |
+Open the Command Palette and run:
 
-Default provider models:
+```text
+CodeBuddy: Set API Key
+```
 
-| Provider | Default Model |
-|---|---|
-| Anthropic | `claude-3-5-haiku-latest` |
-| OpenAI | `gpt-4.1-mini` |
-| OpenRouter | `anthropic/claude-3.5-haiku` |
-| Local | `llama3.2` |
+Paste your provider API key. CodeBuddy stores it using VS Code `SecretStorage`.
 
-Example OpenAI settings:
+## Provider Settings
+
+Open VS Code settings JSON and set your provider.
+
+OpenAI:
 
 ```json
 {
@@ -116,7 +74,17 @@ Example OpenAI settings:
 }
 ```
 
-Example local Ollama-compatible settings:
+Gemini API key through Google's OpenAI-compatible endpoint:
+
+```json
+{
+  "codebuddy.provider": "openai",
+  "codebuddy.apiBaseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+  "codebuddy.model": "gemini-2.5-flash"
+}
+```
+
+Local Ollama-compatible setup:
 
 ```json
 {
@@ -128,32 +96,19 @@ Example local Ollama-compatible settings:
 
 For local servers that do not require a real key, set any placeholder value as the CodeBuddy API key.
 
-## Packaging
+## Development Checks
 
-Build an installable VSIX:
-
-```bash
-npm run package
-```
-
-Install the generated package:
+Run:
 
 ```bash
-code --install-extension codebuddy-tutor-0.2.1.vsix --force
+npm test
 ```
 
-## Privacy Notes
+This compiles the extension and runs a smoke check for commands, keybindings, and memory/review markers.
 
-- API keys are stored using VS Code `SecretStorage`.
-- Chat history, concept memory, mistake memory, and streak state are stored in VS Code workspace state.
-- Code context is sent to the configured AI provider only when the user asks a question or triggers a CodeBuddy action.
-- The current version does not include telemetry.
+## Privacy
 
-## Roadmap
-
-- Terminal error explanation
-- Real spaced repetition with due dates
-- Stronger Python concept classifier
-- Better local-model onboarding
-- Hosted free tier with rate limits
-- Marketplace-ready branding and screenshots
+- API keys are stored with VS Code `SecretStorage`.
+- Chat history, concepts, mistake memory, saved review items, and streak state are stored in VS Code workspace state.
+- Code context is sent to the configured AI provider only when you ask CodeBuddy something.
+- No telemetry is included in the current version.
