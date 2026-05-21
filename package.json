@@ -2,7 +2,7 @@
   "name": "codebuddy-tutor",
   "displayName": "CodeBuddy Tutor",
   "description": "A Python-first AI coding tutor that turns daily coding mistakes into personalized lessons.",
-  "version": "0.2.1",
+  "version": "0.4.0",
   "publisher": "your-publisher-name",
   "license": "MIT",
   "repository": {
@@ -19,6 +19,10 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:codebuddy.openChat",
+    "onCommand:codebuddy.askLine",
+    "onCommand:codebuddy.hintLine",
+    "onCommand:codebuddy.fullSolutionLine",
+    "onCommand:codebuddy.clearInlineNotes",
     "onCommand:codebuddy.explainSelection",
     "onCommand:codebuddy.setApiKey",
     "onCommand:codebuddy.clearApiKey"
@@ -29,6 +33,22 @@
       {
         "command": "codebuddy.openChat",
         "title": "CodeBuddy: Open Tutor Chat"
+      },
+      {
+        "command": "codebuddy.askLine",
+        "title": "CodeBuddy: Ask About This Line"
+      },
+      {
+        "command": "codebuddy.hintLine",
+        "title": "CodeBuddy: Hint For This Line"
+      },
+      {
+        "command": "codebuddy.fullSolutionLine",
+        "title": "CodeBuddy: Full Solution For This Line"
+      },
+      {
+        "command": "codebuddy.clearInlineNotes",
+        "title": "CodeBuddy: Clear Buddy Comments"
       },
       {
         "command": "codebuddy.explainSelection",
@@ -86,8 +106,32 @@
         }
       }
     },
+    "keybindings": [
+      {
+        "command": "codebuddy.askLine",
+        "key": "ctrl+alt+b",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "codebuddy.clearInlineNotes",
+        "key": "ctrl+alt+c",
+        "when": "editorTextFocus"
+      }
+    ],
     "menus": {
       "editor/context": [
+        {
+          "command": "codebuddy.askLine",
+          "group": "navigation"
+        },
+        {
+          "command": "codebuddy.hintLine",
+          "group": "navigation"
+        },
+        {
+          "command": "codebuddy.fullSolutionLine",
+          "group": "navigation"
+        },
         {
           "command": "codebuddy.explainSelection",
           "when": "editorHasSelection",
