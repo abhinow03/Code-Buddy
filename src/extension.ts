@@ -7,7 +7,7 @@ const STREAK_KEY = "codebuddy.streak";
 const MISTAKES_KEY = "codebuddy.mistakes";
 
 type ChatRole = "user" | "assistant";
-type TutorMode = "explain" | "hint" | "debug" | "quiz" | "answer" | "thinking";
+type TutorMode = "explain" | "hint" | "debug" | "quiz" | "answer" | "thinking" | "line";
 type AiProvider = "anthropic" | "openai" | "openrouter" | "local";
 
 interface ChatMessage {
@@ -40,6 +40,8 @@ interface EditorContext {
   fileName?: string;
   languageId?: string;
   source: "selection" | "file" | "none";
+  cursorLine?: number;
+  cursorColumn?: number;
   characterCount: number;
   truncated: boolean;
   pythonFocused: boolean;
@@ -76,6 +78,18 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("codebuddy.openChat", async () => {
       chat.show();
     }),
+    vscode.commands.registerCommand("codebuddy.askLine", async () => {
+      await chat.askAboutCursorLine();
+    }),
+    vscode.commands.registerCommand("codebuddy.hintLine", async () => {
+      await chat.askAboutCursorLine("hint");
+    }),
+    vscode.commands.registerCommand("codebuddy.fullSolutionLine", async () => {
+      await chat.askAboutCursorLine("answer");
+    }),
+    vscode.commands.registerCommand("codebuddy.clearInlineNotes", () => {
+      chat.clearInlineNotes();
+    }),
     vscode.commands.registerCommand("codebuddy.explainSelection", async () => {
       chat.show(true);
       await chat.explainSelection();
@@ -99,6 +113,7 @@ class CodeBuddyChat {
   private mistakes: MistakeRecord[];
   private streak: StreakState;
   private lastEditor?: vscode.TextEditor;
+  private readonly inlineDecorationType: vscode.TextEditorDecorationType;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -109,6 +124,16 @@ class CodeBuddyChat {
     this.mistakes = context.workspaceState.get<MistakeRecord[]>(MISTAKES_KEY, []);
     this.streak = context.workspaceState.get<StreakState>(STREAK_KEY, { current: 0, lastActiveDate: "" });
     this.lastEditor = vscode.window.activeTextEditor;
+    this.inlineDecorationType = vscode.window.createTextEditorDecorationType({
+      after: {
+        margin: "0 0 0 1em",
+        color: new vscode.ThemeColor("editorCodeLens.foreground"),
+        fontStyle: "italic",
+        textDecoration: "none; white-space: pre;"
+      },
+      rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed
+    });
+    context.subscriptions.push(this.inlineDecorationType);
     void this.touchStreak();
   }
 
@@ -160,6 +185,44 @@ class CodeBuddyChat {
 
     const prompt = "Explain the selected code. Start by asking one check-your-understanding question, then explain the important parts.";
     await this.askTutor(prompt, "explain", selectedText);
+  }
+
+  async askAboutCursorLine(mode: TutorMode = "line") {
+    const editor = vscode.window.activeTextEditor ?? this.lastEditor;
+    if (!editor) {
+      this.postStatus("Open a file first, then press Ctrl+Alt+B.");
+      return;
+    }
+
+    this.setLastEditor(editor);
+    const lineNumber = editor.selection.active.line + 1;
+    const currentLine = editor.document.lineAt(editor.selection.active.line).text.trim();
+    const title = mode === "hint"
+      ? `Ask CodeBuddy for a hint on line ${lineNumber}`
+      : mode === "answer"
+        ? `Ask CodeBuddy for a full solution around line ${lineNumber}`
+        : `Ask CodeBuddy about line ${lineNumber}`;
+    const placeHolder = mode === "hint"
+      ? "What kind of hint do you want?"
+      : mode === "answer"
+        ? "What should Buddy solve or fix here?"
+        : "Ask like: what's wrong here? why does this work?";
+    const question = await vscode.window.showInputBox({
+      title,
+      prompt: currentLine ? `Line ${lineNumber}: ${currentLine}` : `Line ${lineNumber}`,
+      placeHolder,
+      ignoreFocusOut: true
+    });
+
+    if (!question?.trim()) {
+      return;
+    }
+
+    await this.askInlineBuddy(question.trim(), editor, mode);
+  }
+
+  clearInlineNotes() {
+    void this.clearBuddyComments();
   }
 
   async promptForApiKey() {
@@ -304,6 +367,117 @@ class CodeBuddyChat {
       this.postStatus(message);
       this.postMessage({ type: "error", error: message });
     }
+  }
+
+  private async askInlineBuddy(userText: string, editor: vscode.TextEditor, mode: TutorMode) {
+    const apiKey = await this.context.secrets.get(SECRET_API_KEY);
+    if (!apiKey) {
+      this.postStatus("Set your API key first with CodeBuddy: Set API Key.");
+      return;
+    }
+
+    await this.touchStreak();
+
+    const config = vscode.workspace.getConfiguration("codebuddy");
+    const provider = getProvider();
+    const apiBaseUrl = getApiBaseUrl(provider, config);
+    const model = getModel(provider, config);
+    const level = config.get<string>("tutorLevel", "beginner");
+    const context = collectCursorContext(config.get<number>("maxContextCharacters", 6000), editor);
+    const detectedConcepts = detectConcepts(`${userText}\n${context.text}`);
+    const detectedMistakes = detectMistakes(`${userText}\n${context.text}`);
+
+    await this.recordConcepts(detectedConcepts);
+    await this.recordMistakes(detectedMistakes);
+
+    const line = editor.selection.active.line;
+    this.setTemporaryInlineNote(editor, line, "Buddy: thinking...");
+
+    let answer = "";
+    try {
+      for await (const chunk of requestTutorReplyStream({
+        provider,
+        apiBaseUrl,
+        apiKey,
+        model,
+        level,
+        mode,
+        userText,
+        context,
+        history: this.history.slice(-4),
+        learnedConcepts: this.concepts,
+        mistakes: this.mistakes
+      })) {
+        answer += chunk;
+      }
+
+      const finalAnswer = cleanBuddyAnswer(answer);
+      editor.setDecorations(this.inlineDecorationType, []);
+      await this.insertBuddyComment(editor, line, finalAnswer, mode);
+      this.appendHistory({ role: "user", content: `Line ${context.cursorLine}: ${userText}` }, false);
+      this.appendHistory({ role: "assistant", content: finalAnswer }, false);
+      this.postStatus(`Buddy added a wrapped comment near line ${context.cursorLine}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Something went wrong while calling the AI API.";
+      this.setTemporaryInlineNote(editor, line, "Buddy: could not answer here");
+      this.postStatus(message);
+    }
+  }
+
+  private setTemporaryInlineNote(editor: vscode.TextEditor, line: number, text: string) {
+    const document = editor.document;
+    const targetLine = Math.min(Math.max(line, 0), document.lineCount - 1);
+    const end = document.lineAt(targetLine).range.end;
+    editor.setDecorations(this.inlineDecorationType, [{
+      range: new vscode.Range(end, end),
+      renderOptions: {
+        after: {
+          contentText: text
+        }
+      }
+    }]);
+  }
+
+  private async insertBuddyComment(editor: vscode.TextEditor, line: number, answer: string, mode: TutorMode) {
+    const document = editor.document;
+    const targetLine = Math.min(Math.max(line, 0), document.lineCount - 1);
+    const indentation = document.lineAt(targetLine).text.match(/^\s*/)?.[0] ?? "";
+    const commentLines = formatBuddyCommentBlock(answer, document.languageId, mode, indentation);
+    const newline = document.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
+    const insertLine = Math.min(targetLine + 1, document.lineCount);
+    const insertPosition = new vscode.Position(insertLine, 0);
+
+    await editor.edit((editBuilder) => {
+      editBuilder.insert(insertPosition, `${commentLines.join(newline)}${newline}`);
+    });
+  }
+
+  private async clearBuddyComments() {
+    const editor = vscode.window.activeTextEditor ?? this.lastEditor;
+    if (!editor) {
+      this.postStatus("Open a file first.");
+      return;
+    }
+
+    const document = editor.document;
+    const ranges: vscode.Range[] = [];
+    for (let line = 0; line < document.lineCount; line++) {
+      if (document.lineAt(line).text.includes("Buddy:")) {
+        ranges.push(document.lineAt(line).rangeIncludingLineBreak);
+      }
+    }
+
+    if (ranges.length === 0) {
+      this.postStatus("No Buddy comments found in this file.");
+      return;
+    }
+
+    await editor.edit((editBuilder) => {
+      for (const range of ranges.reverse()) {
+        editBuilder.delete(range);
+      }
+    });
+    this.postStatus(`Cleared ${ranges.length} Buddy comment${ranges.length === 1 ? "" : "s"}.`);
   }
 
   private appendHistory(message: ChatMessage, render = true) {
@@ -662,17 +836,19 @@ function buildSystemPrompt(level: string, mode: TutorMode, concepts: ConceptReco
   const mistakeMemory = mistakes.slice(0, 5).map((mistake) => `${mistake.pattern} (${mistake.count}x)`).join(", ") || "none yet";
   const debt = getLearningDebt(concepts, mistakes).slice(0, 5).join(", ") || "none yet";
   return [
-    "You are CodeBuddy, an AI coding tutor inside VS Code.",
+    "You are CodeBuddy, a study buddy inside VS Code.",
+    "Talk like a calm friend sitting next to the user while they code.",
     "Your job is to help the user understand code, not write it for them.",
-    "Rules:",
-    "1. Never write a complete solution unless the user explicitly asks for the full answer or the selected mode is Full Answer.",
-    "2. When shown a bug or error, explain why it happens before suggesting a fix.",
-    "3. Guide with questions before explaining, especially when the user seems to be learning a concept.",
-    "4. Offer hints in levels: concept first, direction second, snippet third.",
-    "5. Reference specific line numbers, function names, or variable names from the user's code when available.",
-    "6. Be warm, direct, and concise. Do not say 'Great question!' or add filler.",
-    "7. Track what the user has learned in this session and refer back to it when useful.",
-    "8. If the user is going in the wrong direction, say so clearly but kindly.",
+    "Voice rules:",
+    "1. Keep replies short. Usually 1-3 sentences.",
+    "2. No essay tone. No markdown headings.",
+    "3. Never use filler praise or setup phrases like 'great question', 'good question', 'certainly', 'let us/let's break it down', 'nice catch', or 'you're right to ask'.",
+    "4. Say 'this line', 'right here', or the real line number when cursor context is available.",
+    "5. If the user asks what is wrong, answer from the cursor line and nearby code. Do not ask them to paste code.",
+    "6. Ask one natural follow-up question only when it helps.",
+    "7. Never write a complete solution unless the user asks for the full answer or the selected mode is Full Answer.",
+    "8. When shown a bug or error, explain why it happens before suggesting a fix.",
+    "9. If the user is going in the wrong direction, say so clearly but kindly.",
     "If editor context is provided, do not ask the user to paste the code. Use the provided file or selection context directly.",
     "Primary v1 focus: Python. If the context is not Python, say briefly that CodeBuddy is optimized for Python but still help with the concept.",
     "Novelty behavior: maintain a mentor-like memory. When relevant, connect the current question to repeated mistakes, learning debt, or concepts seen earlier.",
@@ -738,15 +914,17 @@ function formatApiError(status: number, body: string): string {
 function getModeInstruction(mode: TutorMode): string {
   switch (mode) {
     case "hint":
-      return "Mode: Hint. Give the smallest useful nudge. Avoid complete code.";
+      return "Mode: Hint. Give only a hint. Do not give the final fix or full solution.";
     case "debug":
       return "Mode: Debug. Diagnose what is wrong and why. Do not fix it yet unless asked.";
     case "quiz":
       return "Mode: Quiz Me. Ask one short question first. Wait for the user's answer when appropriate.";
     case "answer":
-      return "Mode: Full Answer. Provide the direct solution and explain why it works.";
+      return "Mode: Full Answer. Provide the direct solution or fix and explain why it works, still briefly.";
     case "thinking":
       return "Mode: Explain My Thinking. Compare the user's explanation with the code. Identify what is right, what is wrong, and the corrected mental model. Do not write a full solution unless asked.";
+    case "line":
+      return "Mode: Cursor Line Buddy. Answer the user's question about the current cursor line in 1-2 short sentences. If the line itself is fine, say that and point to the nearby line that matters. No filler.";
     case "explain":
     default:
       return "Mode: Explain. Break down what the code does, line by line if useful.";
@@ -778,6 +956,8 @@ function collectEditorContext(maxCharacters: number, preferredEditor?: vscode.Te
     fileName: document.fileName,
     languageId: document.languageId,
     source,
+    cursorLine: editor.selection.active.line + 1,
+    cursorColumn: editor.selection.active.character + 1,
     characterCount: truncatedText.length,
     truncated: truncatedText.length < contextText.length,
     pythonFocused: document.languageId === "python" || document.fileName.toLowerCase().endsWith(".py")
@@ -801,6 +981,8 @@ function buildForcedContext(text: string, maxCharacters: number): EditorContext 
     fileName: document?.fileName,
     languageId,
     source: "selection",
+    cursorLine: editor ? editor.selection.active.line + 1 : undefined,
+    cursorColumn: editor ? editor.selection.active.character + 1 : undefined,
     characterCount: truncatedText.length,
     truncated: truncatedText.length < contextText.length,
     pythonFocused: languageId === "python" || Boolean(document?.fileName.toLowerCase().endsWith(".py"))
@@ -812,6 +994,8 @@ function summarizeContext(context: EditorContext, concepts: string[], mistakes: 
     source: context.source,
     fileName: context.fileName,
     languageId: context.languageId,
+    cursorLine: context.cursorLine,
+    cursorColumn: context.cursorColumn,
     characterCount: context.characterCount,
     truncated: context.truncated,
     pythonFocused: context.pythonFocused,
@@ -826,9 +1010,60 @@ function emptyContext(): EditorContext {
   return {
     text: "",
     source: "none",
+    cursorLine: undefined,
+    cursorColumn: undefined,
     characterCount: 0,
     truncated: false,
     pythonFocused: false
+  };
+}
+
+function collectCursorContext(maxCharacters: number, editor: vscode.TextEditor): EditorContext {
+  const document = editor.document;
+  const cursor = editor.selection.active;
+  const selectedText = getSelectedText(editor);
+  const startLine = Math.max(0, cursor.line - 12);
+  const endLine = Math.min(document.lineCount - 1, cursor.line + 12);
+  const nearbyLines: string[] = [];
+
+  for (let line = startLine; line <= endLine; line++) {
+    const marker = line === cursor.line ? ">>" : "  ";
+    nearbyLines.push(`${marker} ${line + 1}: ${document.lineAt(line).text}`);
+  }
+
+  const diagnostics = vscode.languages
+    .getDiagnostics(document.uri)
+    .filter((diagnostic) => diagnostic.range.intersection(new vscode.Range(startLine, 0, endLine, Number.MAX_SAFE_INTEGER)))
+    .map((diagnostic) => {
+      const severity = vscode.DiagnosticSeverity[diagnostic.severity];
+      return `Line ${diagnostic.range.start.line + 1} ${severity}: ${diagnostic.message}`;
+    });
+
+  const header = [
+    `File: ${document.fileName}`,
+    `Language: ${document.languageId}`,
+    `Cursor line: ${cursor.line + 1}`,
+    `Cursor column: ${cursor.character + 1}`,
+    `Current line text: ${document.lineAt(cursor.line).text}`,
+    selectedText ? `Selected code:\n${selectedText}` : "Selected code: none",
+    diagnostics.length ? `Diagnostics nearby:\n${diagnostics.join("\n")}` : "Diagnostics nearby: none",
+    "Nearby code with >> marking the cursor line:",
+    `\`\`\`${document.languageId}`,
+    nearbyLines.join("\n"),
+    "```"
+  ].join("\n");
+  const truncatedText = truncateContext(header, maxCharacters);
+
+  return {
+    text: truncatedText,
+    fileName: document.fileName,
+    languageId: document.languageId,
+    source: selectedText ? "selection" : "file",
+    cursorLine: cursor.line + 1,
+    cursorColumn: cursor.character + 1,
+    characterCount: truncatedText.length,
+    truncated: truncatedText.length < header.length,
+    pythonFocused: document.languageId === "python" || document.fileName.toLowerCase().endsWith(".py")
   };
 }
 
@@ -846,6 +1081,79 @@ function truncateContext(text: string, maxCharacters: number): string {
   }
 
   return `${text.slice(0, maxCharacters)}\n\n[Context truncated by CodeBuddy]`;
+}
+
+function cleanBuddyAnswer(text: string): string {
+  return text
+    .replace(/^#+\s+/gm, "")
+    .replace(/\*\*/g, "")
+    .replace(/\bthe code provided\b/gi, "this code")
+    .replace(/\b(that'?s\s+)?(a\s+)?(great|good)\s+question(\s+to\s+ask)?[.!]?\s*/gi, "")
+    .replace(/\b(certainly|sure|absolutely)[,.!]?\s*/gi, "")
+    .replace(/\blet'?s\s+break\s+(it|this)\s+down[,.!]?\s*/gi, "")
+    .replace(/\byou'?re\s+right\s+to\s+ask[,.!]?\s*/gi, "")
+    .replace(/\bnice\s+catch[,.!]?\s*/gi, "")
+    .replace(/\bin essence,?\s*/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function formatBuddyCommentBlock(text: string, languageId: string, mode: TutorMode, indentation: string): string[] {
+  const sentences = text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .filter(Boolean)
+    .slice(0, mode === "answer" ? 8 : mode === "hint" ? 2 : 3)
+    .join(" ");
+  const compact = sentences || text.replace(/\s+/g, " ");
+  const maxLines = mode === "answer" ? 12 : mode === "hint" ? 3 : 5;
+  const lines = wrapText(compact, 58).slice(0, maxLines);
+  const prefix = getCommentPrefix(languageId);
+  const label = mode === "hint"
+    ? "Buddy hint:"
+    : mode === "answer"
+      ? "Buddy solution:"
+      : "Buddy:";
+
+  return lines
+    .map((line, index) => {
+      const lead = index === 0 ? `${label} ` : `${" ".repeat(label.length)} `;
+      return `${indentation}${prefix} ${lead}${line}`;
+    });
+}
+
+function wrapText(text: string, width: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > width && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines.length ? lines : [text.slice(0, width)];
+}
+
+function getCommentPrefix(languageId: string): string {
+  if (["python", "ruby", "shellscript", "r"].includes(languageId)) {
+    return "#";
+  }
+
+  if (["sql", "lua", "haskell"].includes(languageId)) {
+    return "--";
+  }
+
+  return "//";
 }
 
 function detectConcepts(text: string): string[] {

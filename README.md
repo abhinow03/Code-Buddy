@@ -14,6 +14,10 @@ The goal is simple: make the user a stronger developer, not a more dependent one
 
 - Bottom status-bar launcher inside VS Code
 - Compact tutor chat panel
+- `Ctrl+Alt+B` quick ask about the current cursor line
+- Short wrapped Buddy comments inserted below the relevant code line
+- Command triggers for hints and full solutions
+- `Ctrl+Alt+C` clears Buddy comments from the current file
 - Streaming AI responses
 - Active file and selected code context
 - Context transparency before each request
@@ -69,8 +73,17 @@ Run in VS Code:
 2. Press `F5`.
 3. In the Extension Development Host window, click `CodeBuddy` in the bottom status bar.
 4. Run `CodeBuddy: Set API Key`.
-5. Click into the file you want help with, then ask naturally in the CodeBuddy chat.
-6. Select code and use `CodeBuddy: Ask Selection`, or write your understanding and click `Thinking`.
+5. Click into the file you want help with.
+6. Press `Ctrl+Alt+B` and ask about the current line.
+7. Read the wrapped Buddy comment inserted below the line.
+8. Use `Ctrl+Alt+C` to clear Buddy comments.
+
+Extra triggers:
+
+- `CodeBuddy: Hint For This Line`
+- `CodeBuddy: Full Solution For This Line`
+
+The chat panel still exists, but the primary workflow is now keyboard-triggered and cursor-aware.
 
 ## Configuration
 
