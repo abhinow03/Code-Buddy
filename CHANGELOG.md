@@ -54,3 +54,10 @@
 - Added `CodeBuddy: Hint For This Line`.
 - Added `CodeBuddy: Full Solution For This Line`.
 - Updated clear behavior to remove Buddy comments from the current file.
+
+## 0.5.0
+
+- Added `CodeBuddy: Review This Later`.
+- Added `CodeBuddy: Start Daily Review`.
+- Added `CodeBuddy: Show Mistake Timeline`.
+- Saved review items in workspace state with simple spaced review scheduling.

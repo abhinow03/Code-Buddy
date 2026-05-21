@@ -2,7 +2,7 @@
   "name": "codebuddy-tutor",
   "displayName": "CodeBuddy Tutor",
   "description": "A Python-first AI coding tutor that turns daily coding mistakes into personalized lessons.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "your-publisher-name",
   "license": "MIT",
   "repository": {
@@ -22,6 +22,9 @@
     "onCommand:codebuddy.askLine",
     "onCommand:codebuddy.hintLine",
     "onCommand:codebuddy.fullSolutionLine",
+    "onCommand:codebuddy.reviewLater",
+    "onCommand:codebuddy.startDailyReview",
+    "onCommand:codebuddy.showMistakeTimeline",
     "onCommand:codebuddy.clearInlineNotes",
     "onCommand:codebuddy.explainSelection",
     "onCommand:codebuddy.setApiKey",
@@ -45,6 +48,18 @@
       {
         "command": "codebuddy.fullSolutionLine",
         "title": "CodeBuddy: Full Solution For This Line"
+      },
+      {
+        "command": "codebuddy.reviewLater",
+        "title": "CodeBuddy: Review This Later"
+      },
+      {
+        "command": "codebuddy.startDailyReview",
+        "title": "CodeBuddy: Start Daily Review"
+      },
+      {
+        "command": "codebuddy.showMistakeTimeline",
+        "title": "CodeBuddy: Show Mistake Timeline"
       },
       {
         "command": "codebuddy.clearInlineNotes",
@@ -133,6 +148,10 @@
           "group": "navigation"
         },
         {
+          "command": "codebuddy.reviewLater",
+          "group": "navigation"
+        },
+        {
           "command": "codebuddy.explainSelection",
           "when": "editorHasSelection",
           "group": "navigation"
@@ -144,7 +163,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "npm run compile && node scripts/smoke-check.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

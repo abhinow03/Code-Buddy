@@ -5,6 +5,7 @@ const HISTORY_KEY = "codebuddy.chatHistory";
 const CONCEPTS_KEY = "codebuddy.concepts";
 const STREAK_KEY = "codebuddy.streak";
 const MISTAKES_KEY = "codebuddy.mistakes";
+const REVIEW_ITEMS_KEY = "codebuddy.reviewItems";
 
 type ChatRole = "user" | "assistant";
 type TutorMode = "explain" | "hint" | "debug" | "quiz" | "answer" | "thinking" | "line";
@@ -28,6 +29,30 @@ interface MistakeRecord {
   concept: string;
   count: number;
   lastSeen: string;
+}
+
+interface ReviewItem {
+  id: string;
+  createdAt: string;
+  dueDate: string;
+  fileName?: string;
+  line?: number;
+  concept: string;
+  question: string;
+  answer: string;
+  sourcePrompt: string;
+  confidence: "unknown" | "low" | "medium" | "high";
+  reviewCount: number;
+  lastReviewed?: string;
+}
+
+interface LastBuddyExchange {
+  question: string;
+  answer: string;
+  fileName?: string;
+  line?: number;
+  concepts: string[];
+  source: "chat" | "line";
 }
 
 interface StreakState {
@@ -87,6 +112,15 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("codebuddy.fullSolutionLine", async () => {
       await chat.askAboutCursorLine("answer");
     }),
+    vscode.commands.registerCommand("codebuddy.reviewLater", async () => {
+      await chat.reviewLastExplanationLater();
+    }),
+    vscode.commands.registerCommand("codebuddy.startDailyReview", async () => {
+      await chat.startDailyReview();
+    }),
+    vscode.commands.registerCommand("codebuddy.showMistakeTimeline", async () => {
+      await chat.showMistakeTimeline();
+    }),
     vscode.commands.registerCommand("codebuddy.clearInlineNotes", () => {
       chat.clearInlineNotes();
     }),
@@ -111,6 +145,8 @@ class CodeBuddyChat {
   private history: ChatMessage[];
   private concepts: ConceptRecord[];
   private mistakes: MistakeRecord[];
+  private reviewItems: ReviewItem[];
+  private lastBuddyExchange?: LastBuddyExchange;
   private streak: StreakState;
   private lastEditor?: vscode.TextEditor;
   private readonly inlineDecorationType: vscode.TextEditorDecorationType;
@@ -122,6 +158,7 @@ class CodeBuddyChat {
     this.history = context.workspaceState.get<ChatMessage[]>(HISTORY_KEY, []);
     this.concepts = context.workspaceState.get<ConceptRecord[]>(CONCEPTS_KEY, []);
     this.mistakes = context.workspaceState.get<MistakeRecord[]>(MISTAKES_KEY, []);
+    this.reviewItems = context.workspaceState.get<ReviewItem[]>(REVIEW_ITEMS_KEY, []);
     this.streak = context.workspaceState.get<StreakState>(STREAK_KEY, { current: 0, lastActiveDate: "" });
     this.lastEditor = vscode.window.activeTextEditor;
     this.inlineDecorationType = vscode.window.createTextEditorDecorationType({
@@ -242,8 +279,98 @@ class CodeBuddyChat {
     this.postStatus("API key saved.");
   }
 
+  async reviewLastExplanationLater() {
+    const exchange = this.lastBuddyExchange;
+    if (!exchange) {
+      this.postStatus("Ask Buddy something first, then save it for review.");
+      return;
+    }
+
+    const concept = await vscode.window.showInputBox({
+      title: "Save Buddy Review",
+      prompt: "Name the concept you want to review later.",
+      value: exchange.concepts[0] ?? inferConceptFromText(`${exchange.question}\n${exchange.answer}`),
+      ignoreFocusOut: true
+    });
+
+    if (!concept?.trim()) {
+      return;
+    }
+
+    const item: ReviewItem = {
+      id: createId(),
+      createdAt: todayKey(),
+      dueDate: dateKey(addDays(new Date(), 1)),
+      fileName: exchange.fileName,
+      line: exchange.line,
+      concept: concept.trim(),
+      question: buildReviewQuestion(concept.trim(), exchange),
+      answer: exchange.answer,
+      sourcePrompt: exchange.question,
+      confidence: "unknown",
+      reviewCount: 0
+    };
+
+    this.reviewItems.unshift(item);
+    this.reviewItems = this.reviewItems.slice(0, 100);
+    await this.saveReviewItems();
+    this.refreshStatusBar();
+    this.postStatus(`Saved ${item.concept} for tomorrow's review.`);
+  }
+
+  async startDailyReview() {
+    const dueItems = this.getDueReviewItems().slice(0, 3);
+    if (dueItems.length === 0) {
+      this.postStatus("No reviews due yet.");
+      return;
+    }
+
+    for (const item of dueItems) {
+      const response = await vscode.window.showInputBox({
+        title: `CodeBuddy Review: ${item.concept}`,
+        prompt: item.question,
+        placeHolder: "Type your answer in your own words.",
+        ignoreFocusOut: true
+      });
+
+      if (response === undefined) {
+        break;
+      }
+
+      const preview = truncateForMessage(item.answer, 520);
+      const confidence = await vscode.window.showInformationMessage(
+        `Buddy check: ${preview}`,
+        "Not yet",
+        "Mostly",
+        "Got it"
+      );
+
+      if (!confidence) {
+        break;
+      }
+
+      item.reviewCount += 1;
+      item.lastReviewed = todayKey();
+      item.confidence = confidence === "Got it" ? "high" : confidence === "Mostly" ? "medium" : "low";
+      item.dueDate = nextReviewDate(item.confidence);
+    }
+
+    await this.saveReviewItems();
+    this.refreshStatusBar();
+    this.postStatus("Daily review updated.");
+  }
+
+  async showMistakeTimeline() {
+    const lines = buildMistakeTimeline(this.mistakes, this.concepts, this.reviewItems);
+    const document = await vscode.workspace.openTextDocument({
+      language: "markdown",
+      content: lines.join("\n")
+    });
+    await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+  }
+
   refreshStatusBar() {
-    const dueCount = this.concepts.filter((concept) => !concept.reviewed).length;
+    const dueCount = this.concepts.filter((concept) => !concept.reviewed).length + this.getDueReviewItems().length;
     this.statusBarItem.text = dueCount > 0
       ? `$(comment-discussion) CodeBuddy ${dueCount}`
       : "$(comment-discussion) CodeBuddy";
@@ -361,6 +488,14 @@ class CodeBuddyChat {
       }
 
       this.appendHistory({ role: "assistant", content: finalText }, false);
+      this.rememberExchange({
+        question: trimmed,
+        answer: finalText,
+        fileName: context.fileName,
+        line: context.cursorLine,
+        concepts: detectedConcepts,
+        source: "chat"
+      });
       this.postMessage({ type: "streamDone" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong while calling the AI API.";
@@ -416,6 +551,14 @@ class CodeBuddyChat {
       await this.insertBuddyComment(editor, line, finalAnswer, mode);
       this.appendHistory({ role: "user", content: `Line ${context.cursorLine}: ${userText}` }, false);
       this.appendHistory({ role: "assistant", content: finalAnswer }, false);
+      this.rememberExchange({
+        question: userText,
+        answer: finalAnswer,
+        fileName: context.fileName,
+        line: context.cursorLine,
+        concepts: detectedConcepts,
+        source: "line"
+      });
       this.postStatus(`Buddy added a wrapped comment near line ${context.cursorLine}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong while calling the AI API.";
@@ -489,6 +632,15 @@ class CodeBuddyChat {
     if (render) {
       this.postMessage({ type: "message", message });
     }
+  }
+
+  private rememberExchange(exchange: LastBuddyExchange) {
+    this.lastBuddyExchange = {
+      ...exchange,
+      concepts: exchange.concepts.length > 0
+        ? exchange.concepts
+        : [inferConceptFromText(`${exchange.question}\n${exchange.answer}`)]
+    };
   }
 
   private async reviewConcept(conceptName?: string) {
@@ -605,6 +757,17 @@ class CodeBuddyChat {
 
   private async saveConcepts() {
     await this.context.workspaceState.update(CONCEPTS_KEY, this.concepts);
+  }
+
+  private async saveReviewItems() {
+    await this.context.workspaceState.update(REVIEW_ITEMS_KEY, this.reviewItems);
+  }
+
+  private getDueReviewItems() {
+    const today = todayKey();
+    return this.reviewItems
+      .filter((item) => item.dueDate <= today && item.confidence !== "high")
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.createdAt.localeCompare(b.createdAt));
   }
 
   postStatus(text: string) {
@@ -1223,6 +1386,95 @@ function getLearningDebt(concepts: ConceptRecord[], mistakes: MistakeRecord[]): 
   return [...debt.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([name]) => name);
+}
+
+function createId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function inferConceptFromText(text: string): string {
+  return detectConcepts(text)[0] ?? detectMistakes(text)[0]?.concept ?? "code understanding";
+}
+
+function buildReviewQuestion(concept: string, exchange: LastBuddyExchange): string {
+  const location = exchange.fileName
+    ? `${shortFileName(exchange.fileName)}${exchange.line ? ` line ${exchange.line}` : ""}`
+    : "your earlier code";
+
+  if (exchange.source === "line") {
+    return `In ${location}, what was the key idea behind ${concept}?`;
+  }
+
+  return `From your earlier Buddy explanation, how would you explain ${concept} in your own words?`;
+}
+
+function truncateForMessage(text: string, maxLength: number): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+
+  return `${compact.slice(0, maxLength - 3).trim()}...`;
+}
+
+function nextReviewDate(confidence: "unknown" | "low" | "medium" | "high"): string {
+  const days = confidence === "high" ? 7 : confidence === "medium" ? 3 : 1;
+  return dateKey(addDays(new Date(), days));
+}
+
+function buildMistakeTimeline(mistakes: MistakeRecord[], concepts: ConceptRecord[], reviewItems: ReviewItem[]): string[] {
+  const dueReviews = reviewItems.filter((item) => item.dueDate <= todayKey() && item.confidence !== "high");
+  const learningDebt = getLearningDebt(concepts, mistakes);
+  const lines = [
+    "# CodeBuddy Memory",
+    "",
+    `Generated: ${todayKey()}`,
+    "",
+    "## Repeated Mistakes",
+    ""
+  ];
+
+  if (mistakes.length === 0) {
+    lines.push("- No repeated mistake patterns yet.");
+  } else {
+    for (const mistake of mistakes.slice(0, 10)) {
+      lines.push(`- ${mistake.pattern}: ${mistake.count} time${mistake.count === 1 ? "" : "s"}; concept: ${mistake.concept}; last seen: ${mistake.lastSeen}`);
+    }
+  }
+
+  lines.push("", "## Learning Debt", "");
+  if (learningDebt.length === 0) {
+    lines.push("- Nothing is marked as shaky right now.");
+  } else {
+    for (const concept of learningDebt.slice(0, 10)) {
+      lines.push(`- ${concept}`);
+    }
+  }
+
+  lines.push("", "## Reviews Due", "");
+  if (dueReviews.length === 0) {
+    lines.push("- No reviews due today.");
+  } else {
+    for (const item of dueReviews.slice(0, 10)) {
+      const location = item.fileName ? ` (${shortFileName(item.fileName)}${item.line ? `:${item.line}` : ""})` : "";
+      lines.push(`- ${item.concept}${location}: ${item.question}`);
+    }
+  }
+
+  lines.push("", "## Recent Concepts", "");
+  if (concepts.length === 0) {
+    lines.push("- No concepts tracked yet.");
+  } else {
+    for (const concept of concepts.slice(0, 10)) {
+      lines.push(`- ${concept.name}: ${concept.count} time${concept.count === 1 ? "" : "s"}; confidence: ${concept.confidence}; last seen: ${concept.lastSeen}`);
+    }
+  }
+
+  return lines;
+}
+
+function shortFileName(fileName: string): string {
+  return fileName.split(/[\\/]/).pop() ?? fileName;
 }
 
 function getProvider(): AiProvider {
