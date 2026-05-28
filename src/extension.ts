@@ -6,6 +6,7 @@ const CONCEPTS_KEY = "codebuddy.concepts";
 const STREAK_KEY = "codebuddy.streak";
 const MISTAKES_KEY = "codebuddy.mistakes";
 const REVIEW_ITEMS_KEY = "codebuddy.reviewItems";
+const LEARNING_MEMORY_KEY = "codebuddy.learningMemory";
 
 type ChatRole = "user" | "assistant";
 type TutorMode = "explain" | "hint" | "debug" | "quiz" | "answer" | "thinking" | "line";
@@ -46,6 +47,35 @@ interface ReviewItem {
   lastReviewed?: string;
 }
 
+interface LearningMemoryNote {
+  id: string;
+  concept: string;
+  pattern: string;
+  shortLesson: string;
+  exampleFile?: string;
+  line?: number;
+  codeSnippet?: string;
+  timesSeen: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  confidence: "unknown" | "low" | "medium" | "high";
+}
+
+interface SessionMemoryEntry {
+  concept: string;
+  pattern: string;
+  shortLesson: string;
+  fileName?: string;
+  line?: number;
+  codeSnippet?: string;
+  createdAt: string;
+}
+
+interface RelevantMemory {
+  session: SessionMemoryEntry[];
+  saved: LearningMemoryNote[];
+}
+
 interface LastBuddyExchange {
   question: string;
   answer: string;
@@ -67,6 +97,7 @@ interface EditorContext {
   source: "selection" | "file" | "none";
   cursorLine?: number;
   cursorColumn?: number;
+  currentLineText?: string;
   characterCount: number;
   truncated: boolean;
   pythonFocused: boolean;
@@ -121,6 +152,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("codebuddy.showMistakeTimeline", async () => {
       await chat.showMistakeTimeline();
     }),
+    vscode.commands.registerCommand("codebuddy.showLearningMemory", async () => {
+      await chat.showLearningMemory();
+    }),
+    vscode.commands.registerCommand("codebuddy.clearLearningMemory", async () => {
+      await chat.clearLearningMemory();
+    }),
     vscode.commands.registerCommand("codebuddy.clearInlineNotes", () => {
       chat.clearInlineNotes();
     }),
@@ -146,6 +183,8 @@ class CodeBuddyChat {
   private concepts: ConceptRecord[];
   private mistakes: MistakeRecord[];
   private reviewItems: ReviewItem[];
+  private learningMemory: LearningMemoryNote[];
+  private sessionMemory: SessionMemoryEntry[] = [];
   private lastBuddyExchange?: LastBuddyExchange;
   private streak: StreakState;
   private lastEditor?: vscode.TextEditor;
@@ -155,10 +194,11 @@ class CodeBuddyChat {
     private readonly context: vscode.ExtensionContext,
     private readonly statusBarItem: vscode.StatusBarItem
   ) {
-    this.history = context.workspaceState.get<ChatMessage[]>(HISTORY_KEY, []);
+    this.history = [];
     this.concepts = context.workspaceState.get<ConceptRecord[]>(CONCEPTS_KEY, []);
     this.mistakes = context.workspaceState.get<MistakeRecord[]>(MISTAKES_KEY, []);
     this.reviewItems = context.workspaceState.get<ReviewItem[]>(REVIEW_ITEMS_KEY, []);
+    this.learningMemory = context.workspaceState.get<LearningMemoryNote[]>(LEARNING_MEMORY_KEY, []);
     this.streak = context.workspaceState.get<StreakState>(STREAK_KEY, { current: 0, lastActiveDate: "" });
     this.lastEditor = vscode.window.activeTextEditor;
     this.inlineDecorationType = vscode.window.createTextEditorDecorationType({
@@ -171,6 +211,7 @@ class CodeBuddyChat {
       rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed
     });
     context.subscriptions.push(this.inlineDecorationType);
+    void context.workspaceState.update(HISTORY_KEY, undefined);
     void this.touchStreak();
   }
 
@@ -361,12 +402,39 @@ class CodeBuddyChat {
   }
 
   async showMistakeTimeline() {
-    const lines = buildMistakeTimeline(this.mistakes, this.concepts, this.reviewItems);
+    const lines = buildMistakeTimeline(this.mistakes, this.concepts, this.reviewItems, this.learningMemory);
     const document = await vscode.workspace.openTextDocument({
       language: "markdown",
       content: lines.join("\n")
     });
     await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+  }
+
+  async showLearningMemory() {
+    const lines = buildLearningMemoryDocument(this.learningMemory, this.sessionMemory);
+    const document = await vscode.workspace.openTextDocument({
+      language: "markdown",
+      content: lines.join("\n")
+    });
+    await vscode.window.showTextDocument(document, vscode.ViewColumn.Beside);
+  }
+
+  async clearLearningMemory() {
+    const choice = await vscode.window.showWarningMessage(
+      "Clear CodeBuddy learning memory for this workspace? This keeps your API key and current chat history.",
+      { modal: true },
+      "Clear memory"
+    );
+
+    if (choice !== "Clear memory") {
+      return;
+    }
+
+    this.learningMemory = [];
+    this.sessionMemory = [];
+    await this.saveLearningMemory();
+    this.postLearningState();
+    this.postStatus("Learning memory cleared for this workspace.");
   }
 
   refreshStatusBar() {
@@ -454,10 +522,11 @@ class CodeBuddyChat {
     const priorHistory = this.history.slice(-8);
     const detectedConcepts = detectConcepts(`${trimmed}\n${context.text}`);
     const detectedMistakes = detectMistakes(`${trimmed}\n${context.text}`);
+    const relevantMemory = this.findRelevantMemory(trimmed, context, detectedConcepts, detectedMistakes);
 
     await this.recordConcepts(detectedConcepts);
     await this.recordMistakes(detectedMistakes);
-    this.postMessage({ type: "context", context: summarizeContext(context, detectedConcepts, detectedMistakes, provider, model) });
+    this.postMessage({ type: "context", context: summarizeContext(context, detectedConcepts, detectedMistakes, provider, model, relevantMemory) });
 
     this.appendHistory({ role: "user", content: trimmed });
     this.postMessage({ type: "streamStart" });
@@ -476,7 +545,8 @@ class CodeBuddyChat {
         context,
         history: priorHistory,
         learnedConcepts: this.concepts,
-        mistakes: this.mistakes
+        mistakes: this.mistakes,
+        relevantMemory
       })) {
         assistantText += chunk;
         this.postMessage({ type: "streamDelta", text: chunk });
@@ -496,6 +566,7 @@ class CodeBuddyChat {
         concepts: detectedConcepts,
         source: "chat"
       });
+      await this.recordLearningMemory(trimmed, finalText, context, detectedConcepts, detectedMistakes);
       this.postMessage({ type: "streamDone" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong while calling the AI API.";
@@ -521,6 +592,7 @@ class CodeBuddyChat {
     const context = collectCursorContext(config.get<number>("maxContextCharacters", 6000), editor);
     const detectedConcepts = detectConcepts(`${userText}\n${context.text}`);
     const detectedMistakes = detectMistakes(`${userText}\n${context.text}`);
+    const relevantMemory = this.findRelevantMemory(userText, context, detectedConcepts, detectedMistakes);
 
     await this.recordConcepts(detectedConcepts);
     await this.recordMistakes(detectedMistakes);
@@ -541,7 +613,8 @@ class CodeBuddyChat {
         context,
         history: this.history.slice(-4),
         learnedConcepts: this.concepts,
-        mistakes: this.mistakes
+        mistakes: this.mistakes,
+        relevantMemory
       })) {
         answer += chunk;
       }
@@ -559,6 +632,7 @@ class CodeBuddyChat {
         concepts: detectedConcepts,
         source: "line"
       });
+      await this.recordLearningMemory(userText, finalAnswer, context, detectedConcepts, detectedMistakes);
       this.postStatus(`Buddy added a wrapped comment near line ${context.cursorLine}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong while calling the AI API.";
@@ -641,6 +715,94 @@ class CodeBuddyChat {
         ? exchange.concepts
         : [inferConceptFromText(`${exchange.question}\n${exchange.answer}`)]
     };
+  }
+
+  private findRelevantMemory(
+    userText: string,
+    context: EditorContext,
+    concepts: string[],
+    mistakes: MistakeRecord[]
+  ): RelevantMemory {
+    const text = `${userText}\n${context.text}`.toLowerCase();
+    const conceptSet = new Set(concepts.map((concept) => concept.toLowerCase()));
+    const mistakeSet = new Set(mistakes.map((mistake) => mistake.pattern.toLowerCase()));
+
+    const scoreSaved = (note: LearningMemoryNote) => scoreMemoryNote(note, text, conceptSet, mistakeSet);
+    const scoreSession = (entry: SessionMemoryEntry) => scoreSessionMemory(entry, text, conceptSet, mistakeSet);
+
+    return {
+      session: this.sessionMemory
+        .map((entry) => ({ entry, score: scoreSession(entry) }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map(({ entry }) => entry)
+        .slice(0, 3),
+      saved: this.learningMemory
+        .map((note) => ({ note, score: scoreSaved(note) }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score || b.note.lastSeenAt.localeCompare(a.note.lastSeenAt))
+        .map(({ note }) => note)
+        .slice(0, 4)
+    };
+  }
+
+  private async recordLearningMemory(
+    question: string,
+    answer: string,
+    context: EditorContext,
+    concepts: string[],
+    mistakes: MistakeRecord[]
+  ) {
+    const compactConcepts = concepts.length > 0 ? concepts : [inferConceptFromText(`${question}\n${answer}\n${context.text}`)];
+    const pattern = mistakes[0]?.pattern ?? `Shaky understanding around ${compactConcepts[0]}`;
+    const shortLesson = summarizeLesson(answer);
+    const codeSnippet = context.currentLineText?.trim() || extractCurrentLineFromContext(context.text);
+    const today = todayKey();
+
+    const sessionEntry: SessionMemoryEntry = {
+      concept: compactConcepts[0],
+      pattern,
+      shortLesson,
+      fileName: context.fileName,
+      line: context.cursorLine,
+      codeSnippet,
+      createdAt: new Date().toISOString()
+    };
+
+    this.sessionMemory.unshift(sessionEntry);
+    this.sessionMemory = dedupeSessionMemory(this.sessionMemory).slice(0, 25);
+
+    for (const concept of compactConcepts.slice(0, 3)) {
+      const existing = this.learningMemory.find((note) => sameMemoryNote(note, concept, pattern));
+      if (existing) {
+        existing.timesSeen += 1;
+        existing.shortLesson = shortLesson;
+        existing.exampleFile = context.fileName ?? existing.exampleFile;
+        existing.line = context.cursorLine ?? existing.line;
+        existing.codeSnippet = codeSnippet ?? existing.codeSnippet;
+        existing.lastSeenAt = today;
+      } else {
+        this.learningMemory.unshift({
+          id: createId(),
+          concept,
+          pattern,
+          shortLesson,
+          exampleFile: context.fileName,
+          line: context.cursorLine,
+          codeSnippet,
+          timesSeen: 1,
+          firstSeenAt: today,
+          lastSeenAt: today,
+          confidence: "unknown"
+        });
+      }
+    }
+
+    this.learningMemory = this.learningMemory
+      .sort((a, b) => b.timesSeen - a.timesSeen || b.lastSeenAt.localeCompare(a.lastSeenAt))
+      .slice(0, 60);
+    await this.saveLearningMemory();
+    this.postLearningState();
   }
 
   private async reviewConcept(conceptName?: string) {
@@ -745,6 +907,8 @@ class CodeBuddyChat {
       concepts: this.concepts.slice(0, 8),
       mistakes: this.mistakes.slice(0, 5),
       learningDebt: getLearningDebt(this.concepts, this.mistakes).slice(0, 5),
+      learningMemory: this.learningMemory.slice(0, 5),
+      sessionMemory: this.sessionMemory.slice(0, 5),
       streak: this.streak,
       fileName: this.lastEditor?.document.fileName,
       languageId: this.lastEditor?.document.languageId
@@ -752,7 +916,7 @@ class CodeBuddyChat {
   }
 
   private async saveHistory() {
-    await this.context.workspaceState.update(HISTORY_KEY, this.history);
+    // Chat history is intentionally session-only. Long-term memory is saved as compact learning notes.
   }
 
   private async saveConcepts() {
@@ -761,6 +925,10 @@ class CodeBuddyChat {
 
   private async saveReviewItems() {
     await this.context.workspaceState.update(REVIEW_ITEMS_KEY, this.reviewItems);
+  }
+
+  private async saveLearningMemory() {
+    await this.context.workspaceState.update(LEARNING_MEMORY_KEY, this.learningMemory);
   }
 
   private getDueReviewItems() {
@@ -831,6 +999,7 @@ async function* requestTutorReplyStream(options: {
   history: ChatMessage[];
   learnedConcepts: ConceptRecord[];
   mistakes: MistakeRecord[];
+  relevantMemory: RelevantMemory;
 }): AsyncGenerator<string> {
   if (options.provider === "anthropic") {
     yield* requestAnthropicStream(options);
@@ -852,6 +1021,7 @@ async function* requestOpenAiCompatibleStream(options: {
   history: ChatMessage[];
   learnedConcepts: ConceptRecord[];
   mistakes: MistakeRecord[];
+  relevantMemory: RelevantMemory;
 }): AsyncGenerator<string> {
   const response = await fetch(`${options.apiBaseUrl}/chat/completions`, {
     method: "POST",
@@ -868,7 +1038,7 @@ async function* requestOpenAiCompatibleStream(options: {
       temperature: 0.35,
       stream: true,
       messages: [
-        { role: "system", content: buildSystemPrompt(options.level, options.mode, options.learnedConcepts, options.mistakes) },
+        { role: "system", content: buildSystemPrompt(options.level, options.mode, options.learnedConcepts, options.mistakes, options.relevantMemory) },
         ...options.history.map((message) => ({ role: message.role, content: message.content })),
         { role: "user", content: buildUserPrompt(options.userText, options.context) }
       ]
@@ -915,6 +1085,7 @@ async function* requestAnthropicStream(options: {
   history: ChatMessage[];
   learnedConcepts: ConceptRecord[];
   mistakes: MistakeRecord[];
+  relevantMemory: RelevantMemory;
 }): AsyncGenerator<string> {
   const response = await fetch(`${options.apiBaseUrl}/messages`, {
     method: "POST",
@@ -928,7 +1099,7 @@ async function* requestAnthropicStream(options: {
       max_tokens: 1200,
       temperature: 0.35,
       stream: true,
-      system: buildSystemPrompt(options.level, options.mode, options.learnedConcepts, options.mistakes),
+      system: buildSystemPrompt(options.level, options.mode, options.learnedConcepts, options.mistakes, options.relevantMemory),
       messages: [
         ...options.history.map((message) => ({ role: message.role, content: message.content })),
         { role: "user", content: buildUserPrompt(options.userText, options.context) }
@@ -994,10 +1165,18 @@ async function* parseSse(response: Response): AsyncGenerator<string> {
   }
 }
 
-function buildSystemPrompt(level: string, mode: TutorMode, concepts: ConceptRecord[], mistakes: MistakeRecord[]): string {
+function buildSystemPrompt(
+  level: string,
+  mode: TutorMode,
+  concepts: ConceptRecord[],
+  mistakes: MistakeRecord[],
+  relevantMemory: RelevantMemory
+): string {
   const learned = concepts.slice(0, 8).map((concept) => concept.name).join(", ") || "none yet";
   const mistakeMemory = mistakes.slice(0, 5).map((mistake) => `${mistake.pattern} (${mistake.count}x)`).join(", ") || "none yet";
   const debt = getLearningDebt(concepts, mistakes).slice(0, 5).join(", ") || "none yet";
+  const liveMemory = relevantMemory.session.map(formatSessionMemoryForPrompt).join("\n") || "none relevant";
+  const savedMemory = relevantMemory.saved.map(formatLearningMemoryForPrompt).join("\n") || "none relevant";
   return [
     "You are CodeBuddy, a study buddy inside VS Code.",
     "Talk like a calm friend sitting next to the user while they code.",
@@ -1015,11 +1194,15 @@ function buildSystemPrompt(level: string, mode: TutorMode, concepts: ConceptReco
     "If editor context is provided, do not ask the user to paste the code. Use the provided file or selection context directly.",
     "Primary v1 focus: Python. If the context is not Python, say briefly that CodeBuddy is optimized for Python but still help with the concept.",
     "Novelty behavior: maintain a mentor-like memory. When relevant, connect the current question to repeated mistakes, learning debt, or concepts seen earlier.",
+    "Memory behavior: use live session memory for 'you did this a few minutes ago' reminders. Use saved learning memory for compact 'you have seen this pattern before' reminders.",
+    "If memory is relevant, mention it in one short sentence before or after the answer. Do not expose raw memory IDs or sound creepy.",
     "When the user's mental model is wrong, correct the mental model before giving code.",
     `User level: ${level}.`,
     `Concepts already seen this session: ${learned}.`,
     `Repeated mistake patterns: ${mistakeMemory}.`,
     `Current learning debt: ${debt}.`,
+    `Relevant live session memory:\n${liveMemory}`,
+    `Relevant saved learning memory:\n${savedMemory}`,
     getModeInstruction(mode)
   ].join("\n");
 }
@@ -1121,6 +1304,7 @@ function collectEditorContext(maxCharacters: number, preferredEditor?: vscode.Te
     source,
     cursorLine: editor.selection.active.line + 1,
     cursorColumn: editor.selection.active.character + 1,
+    currentLineText: document.lineAt(editor.selection.active.line).text,
     characterCount: truncatedText.length,
     truncated: truncatedText.length < contextText.length,
     pythonFocused: document.languageId === "python" || document.fileName.toLowerCase().endsWith(".py")
@@ -1146,13 +1330,21 @@ function buildForcedContext(text: string, maxCharacters: number): EditorContext 
     source: "selection",
     cursorLine: editor ? editor.selection.active.line + 1 : undefined,
     cursorColumn: editor ? editor.selection.active.character + 1 : undefined,
+    currentLineText: editor ? editor.document.lineAt(editor.selection.active.line).text : undefined,
     characterCount: truncatedText.length,
     truncated: truncatedText.length < contextText.length,
     pythonFocused: languageId === "python" || Boolean(document?.fileName.toLowerCase().endsWith(".py"))
   };
 }
 
-function summarizeContext(context: EditorContext, concepts: string[], mistakes: MistakeRecord[], provider: AiProvider, model: string) {
+function summarizeContext(
+  context: EditorContext,
+  concepts: string[],
+  mistakes: MistakeRecord[],
+  provider: AiProvider,
+  model: string,
+  relevantMemory: RelevantMemory
+) {
   return {
     source: context.source,
     fileName: context.fileName,
@@ -1164,6 +1356,10 @@ function summarizeContext(context: EditorContext, concepts: string[], mistakes: 
     pythonFocused: context.pythonFocused,
     concepts,
     mistakes: mistakes.map((mistake) => mistake.pattern),
+    relevantMemory: {
+      live: relevantMemory.session.length,
+      saved: relevantMemory.saved.length
+    },
     provider,
     model
   };
@@ -1175,6 +1371,7 @@ function emptyContext(): EditorContext {
     source: "none",
     cursorLine: undefined,
     cursorColumn: undefined,
+    currentLineText: undefined,
     characterCount: 0,
     truncated: false,
     pythonFocused: false
@@ -1224,6 +1421,7 @@ function collectCursorContext(maxCharacters: number, editor: vscode.TextEditor):
     source: selectedText ? "selection" : "file",
     cursorLine: cursor.line + 1,
     cursorColumn: cursor.character + 1,
+    currentLineText: document.lineAt(cursor.line).text,
     characterCount: truncatedText.length,
     truncated: truncatedText.length < header.length,
     pythonFocused: document.languageId === "python" || document.fileName.toLowerCase().endsWith(".py")
@@ -1259,6 +1457,142 @@ function cleanBuddyAnswer(text: string): string {
     .replace(/\bin essence,?\s*/gi, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function summarizeLesson(answer: string): string {
+  const cleaned = cleanBuddyAnswer(answer)
+    .replace(/\s+/g, " ")
+    .trim();
+  const firstSentences = cleaned
+    .split(/(?<=[.!?])\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" ");
+  return truncateForMessage(firstSentences || cleaned || "Review this concept again.", 260);
+}
+
+function sameMemoryNote(note: LearningMemoryNote, concept: string, pattern: string): boolean {
+  return normalizeMemoryText(note.concept) === normalizeMemoryText(concept)
+    && normalizeMemoryText(note.pattern) === normalizeMemoryText(pattern);
+}
+
+function dedupeSessionMemory(entries: SessionMemoryEntry[]): SessionMemoryEntry[] {
+  const seen = new Set<string>();
+  const result: SessionMemoryEntry[] = [];
+
+  for (const entry of entries) {
+    const key = `${normalizeMemoryText(entry.concept)}:${normalizeMemoryText(entry.pattern)}:${entry.fileName ?? ""}:${entry.line ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(entry);
+    }
+  }
+
+  return result;
+}
+
+function scoreMemoryNote(
+  note: LearningMemoryNote,
+  text: string,
+  concepts: Set<string>,
+  mistakes: Set<string>
+): number {
+  let score = 0;
+  const concept = note.concept.toLowerCase();
+  const pattern = note.pattern.toLowerCase();
+
+  if (concepts.has(concept)) {
+    score += 6;
+  }
+  if (mistakes.has(pattern)) {
+    score += 6;
+  }
+  if (text.includes(concept)) {
+    score += 3;
+  }
+  if (text.includes(pattern)) {
+    score += 3;
+  }
+  if (note.codeSnippet && tokenOverlapScore(note.codeSnippet, text) >= 2) {
+    score += 2;
+  }
+  if (note.timesSeen >= 2) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function scoreSessionMemory(
+  entry: SessionMemoryEntry,
+  text: string,
+  concepts: Set<string>,
+  mistakes: Set<string>
+): number {
+  let score = 0;
+  const concept = entry.concept.toLowerCase();
+  const pattern = entry.pattern.toLowerCase();
+
+  if (concepts.has(concept)) {
+    score += 7;
+  }
+  if (mistakes.has(pattern)) {
+    score += 7;
+  }
+  if (text.includes(concept)) {
+    score += 3;
+  }
+  if (text.includes(pattern)) {
+    score += 3;
+  }
+  if (entry.codeSnippet && tokenOverlapScore(entry.codeSnippet, text) >= 2) {
+    score += 2;
+  }
+
+  return score;
+}
+
+function tokenOverlapScore(source: string, target: string): number {
+  const tokens = new Set(source.toLowerCase().match(/[a-z_][a-z0-9_]{2,}/g) ?? []);
+  let score = 0;
+
+  for (const token of tokens) {
+    if (target.includes(token)) {
+      score += 1;
+    }
+  }
+
+  return score;
+}
+
+function normalizeMemoryText(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function extractCurrentLineFromContext(contextText: string): string | undefined {
+  const markedLine = contextText.match(/^>>\s+\d+:\s*(.+)$/m);
+  if (markedLine?.[1]) {
+    return markedLine[1].trim();
+  }
+
+  const currentLine = contextText.match(/^Current line text:\s*(.+)$/m);
+  return currentLine?.[1]?.trim();
+}
+
+function formatSessionMemoryForPrompt(entry: SessionMemoryEntry): string {
+  const location = entry.fileName
+    ? `${shortFileName(entry.fileName)}${entry.line ? `:${entry.line}` : ""}`
+    : "this session";
+  const snippet = entry.codeSnippet ? ` Code: ${truncateForMessage(entry.codeSnippet, 120)}.` : "";
+  return `- ${entry.concept}; ${entry.pattern}; ${entry.shortLesson}; seen in ${location}.${snippet}`;
+}
+
+function formatLearningMemoryForPrompt(note: LearningMemoryNote): string {
+  const location = note.exampleFile
+    ? `${shortFileName(note.exampleFile)}${note.line ? `:${note.line}` : ""}`
+    : "an earlier session";
+  const snippet = note.codeSnippet ? ` Code: ${truncateForMessage(note.codeSnippet, 120)}.` : "";
+  return `- ${note.concept}; ${note.pattern}; ${note.shortLesson}; seen ${note.timesSeen}x; last seen ${note.lastSeenAt}; example ${location}.${snippet}`;
 }
 
 function formatBuddyCommentBlock(text: string, languageId: string, mode: TutorMode, indentation: string): string[] {
@@ -1422,7 +1756,12 @@ function nextReviewDate(confidence: "unknown" | "low" | "medium" | "high"): stri
   return dateKey(addDays(new Date(), days));
 }
 
-function buildMistakeTimeline(mistakes: MistakeRecord[], concepts: ConceptRecord[], reviewItems: ReviewItem[]): string[] {
+function buildMistakeTimeline(
+  mistakes: MistakeRecord[],
+  concepts: ConceptRecord[],
+  reviewItems: ReviewItem[],
+  learningMemory: LearningMemoryNote[] = []
+): string[] {
   const dueReviews = reviewItems.filter((item) => item.dueDate <= todayKey() && item.confidence !== "high");
   const learningDebt = getLearningDebt(concepts, mistakes);
   const lines = [
@@ -1467,6 +1806,51 @@ function buildMistakeTimeline(mistakes: MistakeRecord[], concepts: ConceptRecord
   } else {
     for (const concept of concepts.slice(0, 10)) {
       lines.push(`- ${concept.name}: ${concept.count} time${concept.count === 1 ? "" : "s"}; confidence: ${concept.confidence}; last seen: ${concept.lastSeen}`);
+    }
+  }
+
+  lines.push("", "## Compact Learning Memory", "");
+  if (learningMemory.length === 0) {
+    lines.push("- No compact memory saved yet.");
+  } else {
+    for (const note of learningMemory.slice(0, 10)) {
+      const location = note.exampleFile ? ` (${shortFileName(note.exampleFile)}${note.line ? `:${note.line}` : ""})` : "";
+      lines.push(`- ${note.concept}${location}: ${note.pattern}; seen ${note.timesSeen} time${note.timesSeen === 1 ? "" : "s"}; ${note.shortLesson}`);
+    }
+  }
+
+  return lines;
+}
+
+function buildLearningMemoryDocument(learningMemory: LearningMemoryNote[], sessionMemory: SessionMemoryEntry[]): string[] {
+  const lines = [
+    "# CodeBuddy Learning Memory",
+    "",
+    "This is the compact memory CodeBuddy keeps for this workspace. It stores concepts and mistake patterns, not full chat transcripts.",
+    "",
+    `Generated: ${todayKey()}`,
+    "",
+    "## Live Session Memory",
+    ""
+  ];
+
+  if (sessionMemory.length === 0) {
+    lines.push("- No live session memory yet.");
+  } else {
+    for (const entry of sessionMemory.slice(0, 15)) {
+      const location = entry.fileName ? ` (${shortFileName(entry.fileName)}${entry.line ? `:${entry.line}` : ""})` : "";
+      lines.push(`- ${entry.concept}${location}: ${entry.pattern}; ${entry.shortLesson}`);
+    }
+  }
+
+  lines.push("", "## Saved Workspace Memory", "");
+  if (learningMemory.length === 0) {
+    lines.push("- No saved learning memory yet.");
+  } else {
+    for (const note of learningMemory.slice(0, 30)) {
+      const location = note.exampleFile ? ` (${shortFileName(note.exampleFile)}${note.line ? `:${note.line}` : ""})` : "";
+      const snippet = note.codeSnippet ? ` Code: \`${truncateForMessage(note.codeSnippet, 120)}\`.` : "";
+      lines.push(`- ${note.concept}${location}: ${note.pattern}; seen ${note.timesSeen} time${note.timesSeen === 1 ? "" : "s"}; confidence ${note.confidence}; ${note.shortLesson}${snippet}`);
     }
   }
 

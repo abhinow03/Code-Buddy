@@ -2,7 +2,7 @@
   "name": "codebuddy-tutor",
   "displayName": "CodeBuddy Tutor",
   "description": "A Python-first AI coding tutor that turns daily coding mistakes into personalized lessons.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "your-publisher-name",
   "license": "MIT",
   "repository": {
@@ -25,6 +25,8 @@
     "onCommand:codebuddy.reviewLater",
     "onCommand:codebuddy.startDailyReview",
     "onCommand:codebuddy.showMistakeTimeline",
+    "onCommand:codebuddy.showLearningMemory",
+    "onCommand:codebuddy.clearLearningMemory",
     "onCommand:codebuddy.clearInlineNotes",
     "onCommand:codebuddy.explainSelection",
     "onCommand:codebuddy.setApiKey",
@@ -60,6 +62,14 @@
       {
         "command": "codebuddy.showMistakeTimeline",
         "title": "CodeBuddy: Show Mistake Timeline"
+      },
+      {
+        "command": "codebuddy.showLearningMemory",
+        "title": "CodeBuddy: Show Learning Memory"
+      },
+      {
+        "command": "codebuddy.clearLearningMemory",
+        "title": "CodeBuddy: Clear Learning Memory"
       },
       {
         "command": "codebuddy.clearInlineNotes",

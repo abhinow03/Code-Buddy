@@ -10,6 +10,8 @@ const requiredCommands = [
   "codebuddy.reviewLater",
   "codebuddy.startDailyReview",
   "codebuddy.showMistakeTimeline",
+  "codebuddy.showLearningMemory",
+  "codebuddy.clearLearningMemory",
   "codebuddy.clearInlineNotes"
 ];
 
@@ -32,7 +34,13 @@ assert(
 
 const requiredSourceMarkers = [
   "const REVIEW_ITEMS_KEY",
+  "const LEARNING_MEMORY_KEY",
   "interface ReviewItem",
+  "interface LearningMemoryNote",
+  "sessionMemory",
+  "findRelevantMemory",
+  "recordLearningMemory",
+  "buildLearningMemoryDocument",
   "reviewLastExplanationLater",
   "startDailyReview",
   "showMistakeTimeline",
